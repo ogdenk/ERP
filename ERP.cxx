@@ -58,7 +58,6 @@ int main(int argc, char * argv[])
   ImageType::Pointer resampledRescaled = ImageType::New();
   ImageType::Pointer resampledGF = ImageType::New();
    
-
   std::vector<ImageType::Pointer> imagePointers;  // This will hold the pointers to the images to be processed
   imagePointers.reserve(8);
 
@@ -168,7 +167,7 @@ int main(int argc, char * argv[])
   // Use a cubic bspline interpolator to resample the image
   typedef itk::BSplineInterpolateImageFunction<ImageType, double >  InterpolatorType;
   InterpolatorType::Pointer interpolator = InterpolatorType::New();
-  interpolator->SetSplineOrder(3);
+  interpolator->SetSplineOrder(2);
 
   typedef itk::ResampleImageFilter<ImageType, ImageType> ResampleFilterType;
   ResampleFilterType::Pointer resampler = ResampleFilterType::New();
