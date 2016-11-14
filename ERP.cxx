@@ -7,12 +7,9 @@
 //   Copyright (c) 2016, Image Processing Lab, SUNY Upstate Medical University, Syracuse NY
 //   All rights reserved.
 
-#include "itkTestingExtractSliceImageFilter.h"
-#include "itkBinaryThresholdImageFilter.h"
-#include "itkBinaryMedianImageFilter.h"
-#include "itkMaskImageFilter.h"
-#include "itkRegionOfInterestImageFilter.h"
+#include "itkImageFileWriter.h"
 #include "itkImageFileReader.h"
+#include "itkBinaryMedianImageFilter.h"
 #include "itkScalarImageToTextureFeaturesFilter.h"
 #include "itkBinaryImageToShapeLabelMapFilter.h"
 #include "itkBinaryImageToStatisticsLabelMapFilter.h"
@@ -43,6 +40,7 @@ int main(int argc, char * argv[])
   int radius=1;  // size of neighborhood for GLCM determination
   float sum=0, mean=0, factor=1;  // used for structure mean signal calculation for scaling
   bool found; // used for neighborhood generation
+  bool writefiles = false;
 
   // image data and label types
   typedef  unsigned short  int						PixelType;
@@ -86,32 +84,13 @@ int main(int argc, char * argv[])
 	std::cout << "rawavg.nrrd and aseg.nrrd" << std::endl;
 	exit(1);
   }
+
+  if (argc > 2) // write the files to disk
+	  writefiles = true;
+
   inputFile = inputDirectory + "rawavg.nrrd";
   inputLabels = inputDirectory + "aseg.nrrd";
-  
-  // Open the output files for writing the features.  There are 8 different feature files
-  std::vector<FILE *> outputFiles;
-  outputFiles.reserve(8); //storage for eight file handles
-  outputFiles.push_back(fopen((inputDirectory + "orig_features.csv").c_str(), "wt"));
-  outputFiles.push_back(fopen((inputDirectory + "origRescaled_features.csv").c_str(), "wt"));
-  outputFiles.push_back(fopen((inputDirectory + "origGF_features.csv").c_str(), "wt"));
-  outputFiles.push_back(fopen((inputDirectory + "origRescaledGF_features.csv").c_str(), "wt"));
-  outputFiles.push_back(fopen((inputDirectory + "resampled_features.csv").c_str(), "wt"));
-  outputFiles.push_back(fopen((inputDirectory + "resampledRescaled_features.csv").c_str(), "wt"));
-  outputFiles.push_back(fopen((inputDirectory + "resampledGF_features.csv").c_str(), "wt"));
-  outputFiles.push_back(fopen((inputDirectory + "resampledRescaledGF_features.csv").c_str(), "wt"));
-
-  // Put the input directory on the first line of the results file.  This lets us parse the patient ID out later
-  outputstring = "Directory = " + inputDirectory + "\n";
-  fprintf(outputFiles[0], outputstring.c_str());
-  fprintf(outputFiles[1], outputstring.c_str());
-  fprintf(outputFiles[2], outputstring.c_str());
-  fprintf(outputFiles[3], outputstring.c_str());
-  fprintf(outputFiles[4], outputstring.c_str());
-  fprintf(outputFiles[5], outputstring.c_str());
-  fprintf(outputFiles[6], outputstring.c_str());
-  fprintf(outputFiles[7], outputstring.c_str());
-	
+  	
   // Create vectors of label names and label values
   std::vector<std::string> labelNames;
   labelNames.reserve(4); //storage for four labels
@@ -143,6 +122,15 @@ int main(int argc, char * argv[])
   LabelReaderType::Pointer labelReader = LabelReaderType::New();
   labelReader->SetFileName(inputLabels);
   labelReader->Update();
+
+  //  Create file writers for the processed image and label files.
+  typedef itk::ImageFileWriter<ImageType> ImageWriterType;
+  ImageWriterType::Pointer imageWriter = ImageWriterType::New();
+  imageWriter->SetUseCompression(true);
+
+  typedef itk::ImageFileWriter<LabelImageType> LabelWriterType;
+  LabelWriterType::Pointer labelWriter = LabelWriterType::New();
+  labelWriter->SetUseCompression(true);
 
   //  Get the input image and label geometries to use in the resamplers
   //  Input image is 'high resolution' (original scan resolution)
@@ -193,6 +181,14 @@ int main(int argc, char * argv[])
   labelResampler->SetOutputDirection(direction);
   labelResampler->Update();  // only needs to be done once
 
+  //  Write the resampled label map to a file for QC purposes
+  if (writefiles)
+  {
+	  labelWriter->SetInput(labelResampler->GetOutput());
+	  labelWriter->SetFileName(inputDirectory + "aseg_resampled.nrrd");
+	  labelWriter->Update();
+  }
+
   // First four images will use the high-res labels
   for (i = 1; i <= 4; i++)
 	  labelImagePointers.push_back(labelResampler->GetOutput());
@@ -220,7 +216,7 @@ int main(int argc, char * argv[])
   BinaryImageToStatisticsLabelMapFilterType::OutputImageType::LabelObjectType* StatlabelObject;
   BinaryToStatisticsFilter->Update();
 
-
+  std::cout << "Calculating scale factor " << std::endl;
   labelValuesIterator = labelValues.begin();
   i = 0;
   while (labelValuesIterator != labelValues.end())
@@ -231,8 +227,6 @@ int main(int argc, char * argv[])
 
 	  BinaryToStatisticsFilter->SetInputForegroundValue(labelValue);
 	  BinaryToStatisticsFilter->Update();
-	  // should only be one object
-	  std::cout << "There is " << BinaryToStatisticsFilter->GetOutput()->GetNumberOfLabelObjects() << " object with statistics." << std::endl;
 	  StatlabelObject = BinaryToStatisticsFilter->GetOutput()->GetNthLabelObject(0);
 	  sum += StatlabelObject->GetMean();
 
@@ -240,17 +234,26 @@ int main(int argc, char * argv[])
 	  labelValuesIterator++;
   }
   mean = sum / 4.0;
+  std::cout << "Mean signal in structure is  " << mean << std::endl;
   factor = 512. / mean;
-  //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
+  std::cout << "Scale factor is  " << factor << std::endl << std::endl << std::endl;
+  
   // Now calculate the rescaled version of the original image
   typedef itk::ShiftScaleImageFilter<ImageType, ImageType> ScalerType;
   ScalerType::Pointer scaler = ScalerType::New();
   scaler->SetInput(imageReader->GetOutput());
   scaler->SetScale(factor);
   scaler->SetShift(0);
+  std::cout << "Rescaling input image." << std::endl;
   scaler->Update();
   imagePointers.push_back(scaler->GetOutput());  // This is image number 2 to process
+
+  if (writefiles)
+  {
+	  imageWriter->SetInput(scaler->GetOutput());
+	  imageWriter->SetFileName(inputDirectory + "orig_rescaled.nrrd");
+	  imageWriter->Update();
+  }
   
   // Create smoother to Gaussian filter the image data
   typedef itk::DiscreteGaussianImageFilter<ImageType, ImageType> SmoothingType;
@@ -259,28 +262,61 @@ int main(int argc, char * argv[])
   smoother->SetUseImageSpacingOn(); // this is the default value but just in case
   smoother->SetMaximumKernelWidth(5);
   smoother->SetInput(imageReader->GetOutput());
+  std::cout << "Calculating smoothed version of input image." << std::endl;
   smoother->Update(); // This creates the smoothed version of the original data 
   
   DeepCopy<ImageType>(smoother->GetOutput(), origGF.GetPointer()); // need a deep copy of this image
   imagePointers.push_back(origGF.GetPointer());  // This is image number 3
 
+  if (writefiles)
+  {
+	  imageWriter->SetInput(smoother->GetOutput());
+	  imageWriter->SetFileName(inputDirectory + "orig_GF.nrrd");
+	  imageWriter->Update();
+  }
+
   //  Reconfigure to get a smoothed version of the rescaled image
   smoother->SetInput(scaler->GetOutput());
+  std::cout << "Calculating smoothed version of rescaled image." << std::endl;
   smoother->Update();
   DeepCopy<ImageType>(smoother->GetOutput(), origRescaledGF.GetPointer()); // need a deep copy of this image
   imagePointers.push_back(origRescaledGF.GetPointer());  // This is image number 4
 
+  if (writefiles)
+  {
+	  imageWriter->SetInput(smoother->GetOutput());
+	  imageWriter->SetFileName(inputDirectory + "orig_rescaledGF.nrrd");
+	  imageWriter->Update();
+  }
+
   // Now we need rescaled versions of the four images we created.  Resampler geometry is already set up.
   resampler->SetInput(imageReader->GetOutput());
+  std::cout << "Calculating resampled version of input image." << std::endl;
   resampler->Update();
   DeepCopy<ImageType>(resampler->GetOutput(), resampled.GetPointer()); // need a deep copy of this image
   imagePointers.push_back(resampled.GetPointer());  // This is image number 5
 
+  if (writefiles)
+  {
+	  imageWriter->SetInput(resampler->GetOutput());
+	  imageWriter->SetFileName(inputDirectory + "resampled.nrrd");
+	  imageWriter->Update();
+  }
+
   resampler->SetInput(scaler->GetOutput());
+  std::cout << "Calculating resampled version of rescaled input image." << std::endl;
   resampler->Update();
   DeepCopy<ImageType>(resampler->GetOutput(), resampledRescaled.GetPointer()); // need a deep copy of this image
   imagePointers.push_back(resampledRescaled.GetPointer());  // This is image number 6
 
+  if (writefiles)
+  {
+	  imageWriter->SetInput(resampler->GetOutput());
+	  imageWriter->SetFileName(inputDirectory + "resampled_rescaled.nrrd");
+	  imageWriter->Update();
+  }
+
+  std::cout << "Calculating resampled version of smoothed input image." << std::endl;
   smoother->SetInput(imageReader->GetOutput());
   smoother->Update();
   resampler->SetInput(smoother->GetOutput());
@@ -288,11 +324,26 @@ int main(int argc, char * argv[])
   DeepCopy<ImageType>(resampler->GetOutput(), resampledGF.GetPointer()); // need a deep copy of this image
   imagePointers.push_back(resampledGF.GetPointer());  // This is image number 7
 
+  if (writefiles)
+  {
+	  imageWriter->SetInput(resampler->GetOutput());
+	  imageWriter->SetFileName(inputDirectory + "resampledGF.nrrd");
+	  imageWriter->Update();
+  }
+
+  std::cout << "Calculating resampled version of rescaled, smoothed input image." << std::endl << std::endl << std::endl;
   smoother->SetInput(scaler->GetOutput());
   smoother->Update();
   resampler->Update();
   // Don't need a deep copy we will just let the filter hold the image since we're done modifying the images
   imagePointers.push_back(resampler->GetOutput());  // This is image number 8
+
+  if (writefiles)
+  {
+	  imageWriter->SetInput(resampler->GetOutput());
+	  imageWriter->SetFileName(inputDirectory + "resampled_rescaledGF.nrrd");
+	  imageWriter->Update();
+  }
 
   ///////////////////////////////////////////////////////////////////////////////////////////////////////////
   // Set up the feature extraction filters
@@ -381,6 +432,28 @@ int main(int argc, char * argv[])
   //	   LowGreyLevelRunEmphasis, HighGreyLevelRunEmphasis, ShortRunLowGreyLevelEmphasis,
   //	   ShortRunHighGreyLevelEmphasis, LongRunLowGreyLevelEmphasis, LongRunHighGreyLevelEmphasis }
 
+  // Open the output files for writing the features.  There are 8 different feature files
+  std::vector<FILE *> outputFiles;
+  outputFiles.reserve(8); //storage for eight file handles
+  outputFiles.push_back(fopen((inputDirectory + "orig_features.csv").c_str(), "wt"));
+  outputFiles.push_back(fopen((inputDirectory + "origRescaled_features.csv").c_str(), "wt"));
+  outputFiles.push_back(fopen((inputDirectory + "origGF_features.csv").c_str(), "wt"));
+  outputFiles.push_back(fopen((inputDirectory + "origRescaledGF_features.csv").c_str(), "wt"));
+  outputFiles.push_back(fopen((inputDirectory + "resampled_features.csv").c_str(), "wt"));
+  outputFiles.push_back(fopen((inputDirectory + "resampledRescaled_features.csv").c_str(), "wt"));
+  outputFiles.push_back(fopen((inputDirectory + "resampledGF_features.csv").c_str(), "wt"));
+  outputFiles.push_back(fopen((inputDirectory + "resampledRescaledGF_features.csv").c_str(), "wt"));
+
+  // Put the input directory on the first line of the results file.  This lets us parse the patient ID out later
+  outputstring = "Directory = " + inputDirectory + "\n";
+  fprintf(outputFiles[0], outputstring.c_str());
+  fprintf(outputFiles[1], outputstring.c_str());
+  fprintf(outputFiles[2], outputstring.c_str());
+  fprintf(outputFiles[3], outputstring.c_str());
+  fprintf(outputFiles[4], outputstring.c_str());
+  fprintf(outputFiles[5], outputstring.c_str());
+  fprintf(outputFiles[6], outputstring.c_str());
+  fprintf(outputFiles[7], outputstring.c_str());
 
   /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   //        MAIN LOOP
@@ -390,8 +463,11 @@ int main(int argc, char * argv[])
   imageIterator = imagePointers.begin();
   k = 0;
 
+  std::cout << "Processing Images  " << std::endl << std::endl;
+
   while (imageIterator != imagePointers.end())
   {
+	  std::cout << "Processing image  " << k << std::endl;
 	  //  Configure the pipeline to use the appropriate inputs
 	  medianFilter->SetInput(labelImagePointers[k]);
 	  binaryImageToShapeLabelMapFilter->SetInput(labelImagePointers[k]);
@@ -408,6 +484,7 @@ int main(int argc, char * argv[])
 	  {
 		  labelName = labelNames[i];
 		  labelValue = labelValues[i];
+		  std::cout << "Processing  " << labelName << std::endl << std::endl;
 
 		  // First we want to extract the current label and median filter to remove rough edges.
 		  // need to set the appropriate value in the median filter
@@ -416,66 +493,59 @@ int main(int argc, char * argv[])
 
 		  // Now get the shape statistics for that label
 		  binaryImageToShapeLabelMapFilter->SetInputForegroundValue(labelValue);
+		  std::cout << "Calculating shape values for " << labelName << std::endl;
 		  binaryImageToShapeLabelMapFilter->Update();
-		  
-		  // Loop over the regions (should only be 1)
-		  std::cout << "Shape values for " << labelName << std::endl;
-		  std::cout << "Roundness, Flatness, Feret Diameter, Number of Pixels, Physical Size " << std::endl;
-		   
+
 		  labelObject = binaryImageToShapeLabelMapFilter->GetOutput()->GetNthLabelObject(0);
-		  std::cout << labelObject->GetRoundness() << std::endl;
+		  std::cout << "Roundness = " << labelObject->GetRoundness() << std::endl;
     	  outputstring = labelName + "Roundness, %f \n";
 		  fprintf(outputFiles[k], outputstring.c_str(), labelObject->GetRoundness());
-		  std::cout << labelObject->GetFlatness() << std::endl;
+		  std::cout << "Flatness = " << labelObject->GetFlatness() << std::endl;
 		  outputstring = labelName + "Flatness, %f \n";
 		  fprintf(outputFiles[k], outputstring.c_str(), labelObject->GetFlatness());
-		  std::cout << labelObject->GetFeretDiameter() << std::endl;
+		  std::cout << "Feret Diameter = " << labelObject->GetFeretDiameter() << std::endl;
 		  outputstring = labelName + "FeretDiameter, %f \n";
 		  fprintf(outputFiles[k], outputstring.c_str(), labelObject->GetFeretDiameter());
-		  std::cout << labelObject->GetPhysicalSize() << std::endl;
+		  std::cout << "Physical Size = " << labelObject->GetPhysicalSize() << std::endl;
 		  outputstring = labelName + "Volume, %f \n";
 		  fprintf(outputFiles[k], outputstring.c_str(), labelObject->GetPhysicalSize());
-		  std::cout << labelObject->GetElongation() << std::endl;
+		  std::cout << "Elongation = " << labelObject->GetElongation() << std::endl;
 		  outputstring = labelName + "Elongation, %f \n";
 		  fprintf(outputFiles[k], outputstring.c_str(), labelObject->GetElongation());
+		  std::cout << std::endl;
 
 		  // Now get the statistics
 		  BinaryToStatisticsFilter->SetInputForegroundValue(labelValue);
+		  std::cout << "Calculating statistics values for " << labelName << std::endl;
 		  BinaryToStatisticsFilter->Update();
 
-		  std::cout << "Statistics values from un-blurred image for " << labelName << std::endl;
-		  std::cout << "Mean, Median, Skewness, Kurtosis, Standard Deviation " << std::endl;
-		  
 		  StatlabelObject = BinaryToStatisticsFilter->GetOutput()->GetNthLabelObject(0);
-		  // Output the shape properties of the ith region
-		  // Mean, median, skewness, kurtosis, sigma
-		  std::cout << StatlabelObject->GetMean() << std::endl;
+		  std::cout << "Mean = " << StatlabelObject->GetMean() << std::endl;
 		  outputstring = labelName + "Mean, %f \n";
 		  fprintf(outputFiles[k], outputstring.c_str(), StatlabelObject->GetMean());
-		  std::cout << StatlabelObject->GetMedian() << std::endl;
+		  std::cout << "Median = " << StatlabelObject->GetMedian() << std::endl;
 		  outputstring = labelName + "Median, %f \n";
 		  fprintf(outputFiles[k], outputstring.c_str(), StatlabelObject->GetMedian());
-		  std::cout << StatlabelObject->GetSkewness() << std::endl;
+		  std::cout << "Skewness = " << StatlabelObject->GetSkewness() << std::endl;
 		  outputstring = labelName + "Skewness, %f \n";
 		  fprintf(outputFiles[k], outputstring.c_str(), StatlabelObject->GetSkewness());
-		  std::cout << StatlabelObject->GetKurtosis() << std::endl;
+		  std::cout << "Kurtosis = " << StatlabelObject->GetKurtosis() << std::endl;
 		  outputstring = labelName + "Kurtosis, %f \n";
 		  fprintf(outputFiles[k], outputstring.c_str(), StatlabelObject->GetKurtosis());
-		  std::cout << StatlabelObject->GetStandardDeviation() << std::endl;
+		  std::cout << "Sigma = " << StatlabelObject->GetStandardDeviation() << std::endl;
 		  outputstring = labelName + "Sigma, %f \n";
 		  fprintf(outputFiles[k], outputstring.c_str(), StatlabelObject->GetStandardDeviation());
-		  std::cout << std::endl << std::endl;
+		  std::cout << std::endl;
 		 
 		  // Now get the texture features
+		  //  enum TextureFeatureName {Energy, Entropy, Correlation,
+		  //  InverseDifferenceMoment, Inertia, ClusterShade, ClusterProminence, HaralickCorrelation};
 		  textureFilter->SetInsidePixelValue(labelValue);
+		  std::cout << "Calculating GLCM texture values for " << labelName << std::endl;
 		  textureFilter->Update();
 
 		  output = textureFilter->GetFeatureMeans();
 		  outputSD = textureFilter->GetFeatureStandardDeviations();
-
-		  //  enum TextureFeatureName {Energy, Entropy, Correlation,
-		  //  InverseDifferenceMoment, Inertia, ClusterShade, ClusterProminence, HaralickCorrelation};
-		  std::cout << "Radius 1 Texture Features for: " << labelName << std::endl;
 
 		  std::cout << "Energy = " << (*output)[0] << std::endl;
 		  outputstring = labelName + "Energy, %f \n";
@@ -519,11 +589,13 @@ int main(int argc, char * argv[])
 		  outputstring = labelName + "ClusterProminenceSigma, %f \n";
 		  fprintf(outputFiles[k], outputstring.c_str(), (*outputSD)[5]);
 
-		  std::cout << std::endl << std::endl;
+		  std::cout << std::endl;
 
 		  //  Get the run-length features
 		  runLengthFeaturesFilter->SetInsidePixelValue(labelValue);
+		  std::cout << "Calculating run-length features for " << labelName << std::endl;  
 		  runLengthFeaturesFilter->Update();
+
 		  runLengthOutput = runLengthFeaturesFilter->GetFeatureMeans();
 		  runLengthOutputSD = runLengthFeaturesFilter->GetFeatureStandardDeviations();
 
@@ -532,8 +604,7 @@ int main(int argc, char * argv[])
 		  // typedef enum{ ShortRunEmphasis, LongRunEmphasis, GreyLevelNonuniformity, RunLengthNonuniformity,
 		  //	   LowGreyLevelRunEmphasis, HighGreyLevelRunEmphasis, ShortRunLowGreyLevelEmphasis,
 		  //	   ShortRunHighGreyLevelEmphasis, LongRunLowGreyLevelEmphasis, LongRunHighGreyLevelEmphasis }
-		  std::cout << "Radius 1 Run-Length Features for: " << labelName << std::endl;
-
+		  
 		  /*
 		  std::cout << "ShortRunEmphasis = " << (*runLengthOutput)[0] << std::endl;
 		  outputstring = labelName + "ShortRunEmphasis, %f \n";
@@ -611,17 +682,19 @@ int main(int argc, char * argv[])
 		  std::cout << "LongRunHighGreyLevelEmphasisSigma = " << (*runLengthOutputSD)[9] << std::endl;
 		  outputstring = labelName + "LongRunHighGreyLevelEmphasisSigma, %f \n";
 		  fprintf(outputFiles[k], outputstring.c_str(), (*runLengthOutputSD)[9]);
+
+		  std::cout << std::endl << std::endl;
 		  
 		  i++;
 		  labelValuesIterator++;
 		  labelNamesIterator++;
 	  }
+	  std::cout << std::endl << std::endl;
+	  std::cout << std::endl << std::endl;
 	  
 	  k++;
 	  imageIterator++;
-	
   }  
-
   fclose(outputFiles[0]);
   fclose(outputFiles[1]);
   fclose(outputFiles[2]);
@@ -630,9 +703,4 @@ int main(int argc, char * argv[])
   fclose(outputFiles[5]);
   fclose(outputFiles[6]);
   fclose(outputFiles[7]);
-  
- 
-  std::cout << std::endl;
-  std::cout << std::endl;
-
 }
