@@ -1,6 +1,6 @@
 //  ERP.cxx
 //
-//  Processing of brain MRI scans to extract radiomics features for machine learning.
+//  Processing of epilepsy patient brain MRI scans to extract radiomics features for machine learning.
 //
 //
 //
@@ -32,7 +32,7 @@
 
 int main(int argc, char * argv[])
 {
-  unsigned short int labelValue; // holds the current label value during the loop
+  unsigned char labelValue; // holds the current label value during the loop
   std::string labelName;		 // holds the current label name during the loop
   std::string outputstring;		 // used for writing results to csv files
   const unsigned int Dimension = 3;
@@ -64,7 +64,7 @@ int main(int argc, char * argv[])
   std::vector<LabelImageType::Pointer> labelImagePointers;  // This will hold the pointers to the label maps
   labelImagePointers.reserve(8);
 
-  ImageType::SizeType medianRadius; // used for binary median image filter
+  LabelImageType::SizeType medianRadius; // used for binary median image filter
   medianRadius[0] = 1;
   medianRadius[1] = 1;
   medianRadius[2] = 1;
@@ -80,12 +80,12 @@ int main(int argc, char * argv[])
   else
   {
   	std::cout << "Input a directory to process" << std::endl;
-	std::cout << "The image and label files should be in the directory and have the names:" << std::endl;
+	std::cout << "The image and label files must be in the directory and have the names:" << std::endl;
 	std::cout << "rawavg.nrrd and aseg.nrrd" << std::endl;
 	exit(1);
   }
 
-  if (argc > 2) // write the files to disk
+  if (argc > 2) // write the processed image files to disk
 	  writefiles = true;
 
   inputFile = inputDirectory + "rawavg.nrrd";
@@ -99,7 +99,7 @@ int main(int argc, char * argv[])
   labelNames.push_back("LThal");
   labelNames.push_back("RThal");
 
-  std::vector<unsigned short int> labelValues;
+  std::vector<unsigned char> labelValues;
   labelValues.reserve(4);  //storage for four values
   labelValues.push_back(LeftHippocampus);
   labelValues.push_back(RightHippocampus);
@@ -108,7 +108,7 @@ int main(int argc, char * argv[])
 
   // Create iterators for the vectors.  We will iterate over the structures when doing the feature extraction
   std::vector<std::string>::iterator labelNamesIterator;
-  std::vector<unsigned short int>::iterator labelValuesIterator;
+  std::vector<unsigned char>::iterator labelValuesIterator;
 
   // open the image data
   typedef itk::ImageFileReader< ImageType >  ReaderType;
@@ -146,13 +146,12 @@ int main(int argc, char * argv[])
   ImageType::DirectionType direction = imageReader->GetOutput()->GetDirection();
   ImageType::DirectionType labeldirection = labelReader->GetOutput()->GetDirection();
 
-  // Set up the pipeline components.  We will connect the components based on the desired
-  // processing in the loops
+  // Set up the pipeline components.
   /////////////////////////////////////////////////////////////////////////////////////////
 
   // Need a resampler to downsample the input image data to be the same as the label image
   // at 1 x 1 x 1 mm.  We will use the label geometry to do this
-  // Use a cubic bspline interpolator to resample the image
+  // Use a bspline interpolator to resample the image
   typedef itk::BSplineInterpolateImageFunction<ImageType, double >  InterpolatorType;
   InterpolatorType::Pointer interpolator = InterpolatorType::New();
   interpolator->SetSplineOrder(2);
@@ -164,8 +163,7 @@ int main(int argc, char * argv[])
   resampler->SetOutputSpacing(labelspacing);
   resampler->SetOutputOrigin(labelorigin);
   resampler->SetOutputDirection(labeldirection);
-  // don't call update or SetInput() as both original and rescaled will be resampled
-  
+    
   // Need a resampler to upsample the label map to use with the input image
   // Need an interpolator, should use nearest neighbor for label maps
   typedef itk::NearestNeighborInterpolateImageFunction<LabelImageType, double >  NNInterpolatorType;
@@ -189,7 +187,7 @@ int main(int argc, char * argv[])
 	  labelWriter->Update();
   }
 
-  // First four images will use the high-res labels
+  // First four (non-resampled) images will use the high-res labels
   for (i = 1; i <= 4; i++)
 	  labelImagePointers.push_back(labelResampler->GetOutput());
   
@@ -214,7 +212,6 @@ int main(int argc, char * argv[])
   BinaryToStatisticsFilter->SetComputeHistogram(TRUE);
   BinaryToStatisticsFilter->SetCoordinateTolerance(0.01);
   BinaryImageToStatisticsLabelMapFilterType::OutputImageType::LabelObjectType* StatlabelObject;
-  BinaryToStatisticsFilter->Update();
 
   std::cout << "Calculating scale factor " << std::endl;
   labelValuesIterator = labelValues.begin();
@@ -222,11 +219,9 @@ int main(int argc, char * argv[])
   while (labelValuesIterator != labelValues.end())
   {
 	  labelValue = labelValues[i];
-	  
 	  medianFilter->SetForegroundValue(labelValue);
-
 	  BinaryToStatisticsFilter->SetInputForegroundValue(labelValue);
-	  BinaryToStatisticsFilter->Update();
+	  BinaryToStatisticsFilter->UpdateLargestPossibleRegion();
 	  StatlabelObject = BinaryToStatisticsFilter->GetOutput()->GetNthLabelObject(0);
 	  sum += StatlabelObject->GetMean();
 
@@ -234,7 +229,7 @@ int main(int argc, char * argv[])
 	  labelValuesIterator++;
   }
   mean = sum / 4.0;
-  std::cout << "Mean signal in structure is  " << mean << std::endl;
+  std::cout << "Mean signal in structures is  " << mean << std::endl;
   factor = 512. / mean;
   std::cout << "Scale factor is  " << factor << std::endl << std::endl << std::endl;
   
@@ -245,13 +240,13 @@ int main(int argc, char * argv[])
   scaler->SetScale(factor);
   scaler->SetShift(0);
   std::cout << "Rescaling input image." << std::endl;
-  scaler->Update();
+  scaler->UpdateLargestPossibleRegion();
   imagePointers.push_back(scaler->GetOutput());  // This is image number 2 to process
 
   if (writefiles)
   {
 	  imageWriter->SetInput(scaler->GetOutput());
-	  imageWriter->SetFileName(inputDirectory + "orig_rescaled.nrrd");
+	  imageWriter->SetFileName(inputDirectory + "rawavg_rescaled.nrrd");
 	  imageWriter->Update();
   }
   
@@ -263,78 +258,78 @@ int main(int argc, char * argv[])
   smoother->SetMaximumKernelWidth(5);
   smoother->SetInput(imageReader->GetOutput());
   std::cout << "Calculating smoothed version of input image." << std::endl;
-  smoother->Update(); // This creates the smoothed version of the original data 
-  
+  smoother->UpdateLargestPossibleRegion(); // This creates the smoothed version of the original data 
+
   DeepCopy<ImageType>(smoother->GetOutput(), origGF.GetPointer()); // need a deep copy of this image
-  imagePointers.push_back(origGF.GetPointer());  // This is image number 3
+  imagePointers.push_back(origGF);  // This is image number 3
 
   if (writefiles)
   {
-	  imageWriter->SetInput(smoother->GetOutput());
-	  imageWriter->SetFileName(inputDirectory + "orig_GF.nrrd");
+	  imageWriter->SetInput(origGF.GetPointer());
+	  imageWriter->SetFileName(inputDirectory + "rawavg_GF.nrrd");
 	  imageWriter->Update();
   }
 
   //  Reconfigure to get a smoothed version of the rescaled image
   smoother->SetInput(scaler->GetOutput());
   std::cout << "Calculating smoothed version of rescaled image." << std::endl;
-  smoother->Update();
+  smoother->UpdateLargestPossibleRegion();
   DeepCopy<ImageType>(smoother->GetOutput(), origRescaledGF.GetPointer()); // need a deep copy of this image
   imagePointers.push_back(origRescaledGF.GetPointer());  // This is image number 4
 
   if (writefiles)
   {
-	  imageWriter->SetInput(smoother->GetOutput());
-	  imageWriter->SetFileName(inputDirectory + "orig_rescaledGF.nrrd");
+	  imageWriter->SetInput(origRescaledGF.GetPointer());
+	  imageWriter->SetFileName(inputDirectory + "rawavg_rescaledGF.nrrd");
 	  imageWriter->Update();
   }
 
   // Now we need rescaled versions of the four images we created.  Resampler geometry is already set up.
   resampler->SetInput(imageReader->GetOutput());
   std::cout << "Calculating resampled version of input image." << std::endl;
-  resampler->Update();
+  resampler->UpdateLargestPossibleRegion();
   DeepCopy<ImageType>(resampler->GetOutput(), resampled.GetPointer()); // need a deep copy of this image
   imagePointers.push_back(resampled.GetPointer());  // This is image number 5
 
   if (writefiles)
   {
-	  imageWriter->SetInput(resampler->GetOutput());
+	  imageWriter->SetInput(resampled.GetPointer());
 	  imageWriter->SetFileName(inputDirectory + "resampled.nrrd");
 	  imageWriter->Update();
   }
 
   resampler->SetInput(scaler->GetOutput());
   std::cout << "Calculating resampled version of rescaled input image." << std::endl;
-  resampler->Update();
+  resampler->UpdateLargestPossibleRegion();
   DeepCopy<ImageType>(resampler->GetOutput(), resampledRescaled.GetPointer()); // need a deep copy of this image
   imagePointers.push_back(resampledRescaled.GetPointer());  // This is image number 6
 
   if (writefiles)
   {
-	  imageWriter->SetInput(resampler->GetOutput());
+	  imageWriter->SetInput(resampledRescaled.GetPointer());
 	  imageWriter->SetFileName(inputDirectory + "resampled_rescaled.nrrd");
 	  imageWriter->Update();
   }
 
   std::cout << "Calculating resampled version of smoothed input image." << std::endl;
   smoother->SetInput(imageReader->GetOutput());
-  smoother->Update();
+  smoother->UpdateLargestPossibleRegion();
   resampler->SetInput(smoother->GetOutput());
-  resampler->Update();
+  resampler->UpdateLargestPossibleRegion();
   DeepCopy<ImageType>(resampler->GetOutput(), resampledGF.GetPointer()); // need a deep copy of this image
   imagePointers.push_back(resampledGF.GetPointer());  // This is image number 7
 
   if (writefiles)
   {
-	  imageWriter->SetInput(resampler->GetOutput());
+	  imageWriter->SetInput(resampledGF.GetPointer());
 	  imageWriter->SetFileName(inputDirectory + "resampledGF.nrrd");
 	  imageWriter->Update();
   }
 
   std::cout << "Calculating resampled version of rescaled, smoothed input image." << std::endl << std::endl << std::endl;
   smoother->SetInput(scaler->GetOutput());
-  smoother->Update();
-  resampler->Update();
+  smoother->UpdateLargestPossibleRegion();
+  resampler->UpdateLargestPossibleRegion();
   // Don't need a deep copy we will just let the filter hold the image since we're done modifying the images
   imagePointers.push_back(resampler->GetOutput());  // This is image number 8
 
@@ -432,13 +427,14 @@ int main(int argc, char * argv[])
   //	   LowGreyLevelRunEmphasis, HighGreyLevelRunEmphasis, ShortRunLowGreyLevelEmphasis,
   //	   ShortRunHighGreyLevelEmphasis, LongRunLowGreyLevelEmphasis, LongRunHighGreyLevelEmphasis }
 
+  ///////////////////////////////////////////////////////////////////////////////////////////////
   // Open the output files for writing the features.  There are 8 different feature files
   std::vector<FILE *> outputFiles;
   outputFiles.reserve(8); //storage for eight file handles
-  outputFiles.push_back(fopen((inputDirectory + "orig_features.csv").c_str(), "wt"));
-  outputFiles.push_back(fopen((inputDirectory + "origRescaled_features.csv").c_str(), "wt"));
-  outputFiles.push_back(fopen((inputDirectory + "origGF_features.csv").c_str(), "wt"));
-  outputFiles.push_back(fopen((inputDirectory + "origRescaledGF_features.csv").c_str(), "wt"));
+  outputFiles.push_back(fopen((inputDirectory + "rawavg_features.csv").c_str(), "wt"));
+  outputFiles.push_back(fopen((inputDirectory + "rawavgRescaled_features.csv").c_str(), "wt"));
+  outputFiles.push_back(fopen((inputDirectory + "rawavgGF_features.csv").c_str(), "wt"));
+  outputFiles.push_back(fopen((inputDirectory + "rawavgRescaledGF_features.csv").c_str(), "wt"));
   outputFiles.push_back(fopen((inputDirectory + "resampled_features.csv").c_str(), "wt"));
   outputFiles.push_back(fopen((inputDirectory + "resampledRescaled_features.csv").c_str(), "wt"));
   outputFiles.push_back(fopen((inputDirectory + "resampledGF_features.csv").c_str(), "wt"));
@@ -459,18 +455,16 @@ int main(int argc, char * argv[])
   //        MAIN LOOP
   /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-  // Iter over the 8 image versions to generate the features
+  // Iterate over the 8 image versions to generate the features
   imageIterator = imagePointers.begin();
   k = 0;
-
   std::cout << "Processing Images  " << std::endl << std::endl;
 
   while (imageIterator != imagePointers.end())
   {
-	  std::cout << "Processing image  " << k << std::endl;
+	  std::cout << "Processing image  " << k+1 << std::endl << std::endl;
 	  //  Configure the pipeline to use the appropriate inputs
 	  medianFilter->SetInput(labelImagePointers[k]);
-	  binaryImageToShapeLabelMapFilter->SetInput(labelImagePointers[k]);
 	  BinaryToStatisticsFilter->SetInput2(imagePointers[k]);
 	  textureFilter->SetInput(imagePointers[k]);
 	  runLengthFeaturesFilter->SetInput(imagePointers[k]);
@@ -480,6 +474,7 @@ int main(int argc, char * argv[])
 	  i = 0;
 	  labelValuesIterator = labelValues.begin();
 	  labelNamesIterator = labelNames.begin();
+
 	  while (labelNamesIterator != labelNames.end())
 	  {
 		  labelName = labelNames[i];
@@ -489,12 +484,13 @@ int main(int argc, char * argv[])
 		  // First we want to extract the current label and median filter to remove rough edges.
 		  // need to set the appropriate value in the median filter
 		  medianFilter->SetForegroundValue(labelValue);
-		  medianFilter->Update();
+		  medianFilter->UpdateLargestPossibleRegion();
+		  std::cout << "Median Filter Updated" << std::endl << std::endl;
 
 		  // Now get the shape statistics for that label
 		  binaryImageToShapeLabelMapFilter->SetInputForegroundValue(labelValue);
 		  std::cout << "Calculating shape values for " << labelName << std::endl;
-		  binaryImageToShapeLabelMapFilter->Update();
+		  binaryImageToShapeLabelMapFilter->UpdateLargestPossibleRegion();
 
 		  labelObject = binaryImageToShapeLabelMapFilter->GetOutput()->GetNthLabelObject(0);
 		  std::cout << "Roundness = " << labelObject->GetRoundness() << std::endl;
@@ -517,7 +513,7 @@ int main(int argc, char * argv[])
 		  // Now get the statistics
 		  BinaryToStatisticsFilter->SetInputForegroundValue(labelValue);
 		  std::cout << "Calculating statistics values for " << labelName << std::endl;
-		  BinaryToStatisticsFilter->Update();
+		  BinaryToStatisticsFilter->UpdateLargestPossibleRegion();
 
 		  StatlabelObject = BinaryToStatisticsFilter->GetOutput()->GetNthLabelObject(0);
 		  std::cout << "Mean = " << StatlabelObject->GetMean() << std::endl;
@@ -542,7 +538,7 @@ int main(int argc, char * argv[])
 		  //  InverseDifferenceMoment, Inertia, ClusterShade, ClusterProminence, HaralickCorrelation};
 		  textureFilter->SetInsidePixelValue(labelValue);
 		  std::cout << "Calculating GLCM texture values for " << labelName << std::endl;
-		  textureFilter->Update();
+		  textureFilter->UpdateLargestPossibleRegion();
 
 		  output = textureFilter->GetFeatureMeans();
 		  outputSD = textureFilter->GetFeatureStandardDeviations();
@@ -594,7 +590,7 @@ int main(int argc, char * argv[])
 		  //  Get the run-length features
 		  runLengthFeaturesFilter->SetInsidePixelValue(labelValue);
 		  std::cout << "Calculating run-length features for " << labelName << std::endl;  
-		  runLengthFeaturesFilter->Update();
+		  runLengthFeaturesFilter->UpdateLargestPossibleRegion();
 
 		  runLengthOutput = runLengthFeaturesFilter->GetFeatureMeans();
 		  runLengthOutputSD = runLengthFeaturesFilter->GetFeatureStandardDeviations();
