@@ -370,15 +370,18 @@ int main(int argc, char * argv[])
   TextureFilterType::OffsetVector::ConstIterator vIt; 
   const TextureFilterType::FeatureValueVector* output;
   const TextureFilterType::FeatureValueVector* outputSD;
+
   //  From itkGreyLevelCooccurrenceMatrixTextureCoefficientsCalculator.h
   //
   //  enum TextureFeatureName {Energy, Entropy, Correlation,
   //  InverseDifferenceMoment, Inertia, ClusterShade, ClusterProminence, HaralickCorrelation};
+  
   const TextureFilterType::FeatureNameVector* featureNames;
   featureNames = textureFilter->GetRequestedFeatures();
   // featureNames shows that features 1,2,4,5,6,7 of the above list are default
 
   // Build the offset vector for the texture filter
+  // This is the same as the default but shows the process of building a neighborhood
   radius = 1;
   for (i = -radius; i <= radius; i++)
   {
@@ -427,8 +430,10 @@ int main(int argc, char * argv[])
   //	   LowGreyLevelRunEmphasis, HighGreyLevelRunEmphasis, ShortRunLowGreyLevelEmphasis,
   //	   ShortRunHighGreyLevelEmphasis, LongRunLowGreyLevelEmphasis, LongRunHighGreyLevelEmphasis }
 
+
   ///////////////////////////////////////////////////////////////////////////////////////////////
   // Open the output files for writing the features.  There are 8 different feature files
+  
   std::vector<FILE *> outputFiles;
   outputFiles.reserve(8); //storage for eight file handles
   outputFiles.push_back(fopen((inputDirectory + "rawavg_features.csv").c_str(), "wt"));
@@ -458,8 +463,7 @@ int main(int argc, char * argv[])
   // Iterate over the 8 image versions to generate the features
   imageIterator = imagePointers.begin();
   k = 0;
-  std::cout << "Processing Images  " << std::endl << std::endl;
-
+ 
   while (imageIterator != imagePointers.end())
   {
 	  std::cout << "Processing image  " << k+1 << std::endl << std::endl;
@@ -472,7 +476,6 @@ int main(int argc, char * argv[])
 	  // Iterate over the labels we want to process
 	  //////////////////////////////////////////////////////////////////////////////////////////////////////////
 	  i = 0;
-	  labelValuesIterator = labelValues.begin();
 	  labelNamesIterator = labelNames.begin();
 
 	  while (labelNamesIterator != labelNames.end())
@@ -600,23 +603,21 @@ int main(int argc, char * argv[])
 		  // typedef enum{ ShortRunEmphasis, LongRunEmphasis, GreyLevelNonuniformity, RunLengthNonuniformity,
 		  //	   LowGreyLevelRunEmphasis, HighGreyLevelRunEmphasis, ShortRunLowGreyLevelEmphasis,
 		  //	   ShortRunHighGreyLevelEmphasis, LongRunLowGreyLevelEmphasis, LongRunHighGreyLevelEmphasis }
-		  
-		  /*
+		  		  
 		  std::cout << "ShortRunEmphasis = " << (*runLengthOutput)[0] << std::endl;
 		  outputstring = labelName + "ShortRunEmphasis, %f \n";
-		  fprintf(outputFile, outputstring.c_str(), (*runLengthOutput)[0]);
+		  fprintf(outputFiles[k], outputstring.c_str(), (*runLengthOutput)[0]);
 		  std::cout << "ShortRunEmphasisSigma = " << (*runLengthOutputSD)[0] << std::endl;
 		  outputstring = labelName + "ShortRunEmphasisSigma, %f \n";
-		  fprintf(outputFile, outputstring.c_str(), (*runLengthOutputSD)[0]);
+		  fprintf(outputFiles[k], outputstring.c_str(), (*runLengthOutputSD)[0]);
 
 		  std::cout << "LongRunEmphasis = " << (*runLengthOutput)[1] << std::endl;
 		  outputstring = labelName + "LongRunEmphasis, %f \n";
-		  fprintf(outputFile, outputstring.c_str(), (*runLengthOutput)[1]);
+		  fprintf(outputFiles[k], outputstring.c_str(), (*runLengthOutput)[1]);
 		  std::cout << "LongRunEmphasisSigma = " << (*runLengthOutputSD)[1] << std::endl;
 		  outputstring = labelName + "LongRunEmphasisSigma, %f \n";
-		  fprintf(outputFile, outputstring.c_str(), (*runLengthOutputSD)[1]);
-		  */
-
+		  fprintf(outputFiles[k], outputstring.c_str(), (*runLengthOutputSD)[1]);
+		  
 		  std::cout << "GreyLevelNonuniformity = " << (*runLengthOutput)[2] << std::endl;
 		  outputstring = labelName + "GreyLevelNonuniformity, %f \n";
 		  fprintf(outputFiles[k], outputstring.c_str(), (*runLengthOutput)[2]);
@@ -631,14 +632,12 @@ int main(int argc, char * argv[])
 		  outputstring = labelName + "RunLengthNonuniformitySigma, %f \n";
 		  fprintf(outputFiles[k], outputstring.c_str(), (*runLengthOutputSD)[3]);
 
-		  /*
 		  std::cout << "LowGreyLevelRunEmphasis = " << (*runLengthOutput)[4] << std::endl;
 		  outputstring = labelName + "LowGreyLevelRunEmphasis, %f \n";
-		  fprintf(outputFile, outputstring.c_str(), (*runLengthOutput)[4]);
+		  fprintf(outputFiles[k], outputstring.c_str(), (*runLengthOutput)[4]);
 		  std::cout << "LowGreyLevelRunEmphasisSigma = " << (*runLengthOutputSD)[4] << std::endl;
 		  outputstring = labelName + "LowGreyLevelRunEmphasisSigma, %f \n";
-		  fprintf(outputFile, outputstring.c_str(), (*runLengthOutputSD)[4]);
-		  */
+		  fprintf(outputFiles[k], outputstring.c_str(), (*runLengthOutputSD)[4]);
 
 		  std::cout << "HighGreyLevelRunEmphasis = " << (*runLengthOutput)[5] << std::endl;
 		  outputstring = labelName + "HighGreyLevelRunEmphasis, %f \n";
@@ -647,14 +646,12 @@ int main(int argc, char * argv[])
 		  outputstring = labelName + "HighGreyLevelRunEmphasisSigma, %f \n";
 		  fprintf(outputFiles[k], outputstring.c_str(), (*runLengthOutputSD)[5]);
 
-		  /*
 		  std::cout << "ShortRunLowGreyLevelEmphasis = " << (*runLengthOutput)[6] << std::endl;
 		  outputstring = labelName + "ShortRunLowGreyLevelEmphasis, %f \n";
-		  fprintf(outputFile, outputstring.c_str(), (*runLengthOutput)[6]);
+		  fprintf(outputFiles[k], outputstring.c_str(), (*runLengthOutput)[6]);
 		  std::cout << "ShortRunLowGreyLevelEmphasisSigma = " << (*runLengthOutputSD)[6] << std::endl;
 		  outputstring = labelName + "ShortRunLowGreyLevelEmphasisSigma, %f \n";
-		  fprintf(outputFile, outputstring.c_str(), (*runLengthOutputSD)[6]);
-		  */
+		  fprintf(outputFiles[k], outputstring.c_str(), (*runLengthOutputSD)[6]);
 
 		  std::cout << "ShortRunHighGreyLevelEmphasis = " << (*runLengthOutput)[7] << std::endl;
 		  outputstring = labelName + "ShortRunHighGreyLevelEmphasis, %f \n";
@@ -663,15 +660,13 @@ int main(int argc, char * argv[])
 		  outputstring = labelName + "ShortRunHighGreyLevelEmphasisSigma, %f \n";
 		  fprintf(outputFiles[k], outputstring.c_str(), (*runLengthOutputSD)[7]);
 
-		  /*
 		  std::cout << "LongRunLowGreyLevelEmphasis = " << (*runLengthOutput)[8] << std::endl;
 		  outputstring = labelName + "LongRunLowGreyLevelEmphasis, %f \n";
-		  fprintf(outputFile, outputstring.c_str(), (*runLengthOutput)[8]);
+		  fprintf(outputFiles[k], outputstring.c_str(), (*runLengthOutput)[8]);
 		  std::cout << "LongRunLowGreyLevelEmphasisSigma = " << (*runLengthOutputSD)[8] << std::endl;
 		  outputstring = labelName + "LongRunLowGreyLevelEmphasisSigma, %f \n";
-		  fprintf(outputFile, outputstring.c_str(), (*runLengthOutputSD)[8]);
-		  */
-
+		  fprintf(outputFiles[k], outputstring.c_str(), (*runLengthOutputSD)[8]);
+		  
 		  std::cout << "LongRunHighGreyLevelEmphasis = " << (*runLengthOutput)[9] << std::endl;
 		  outputstring = labelName + "LongRunHighGreyLevelEmphasis, %f \n";
 		  fprintf(outputFiles[k], outputstring.c_str(), (*runLengthOutput)[9]);
@@ -682,7 +677,6 @@ int main(int argc, char * argv[])
 		  std::cout << std::endl << std::endl;
 		  
 		  i++;
-		  labelValuesIterator++;
 		  labelNamesIterator++;
 	  }
 	  std::cout << std::endl << std::endl;
